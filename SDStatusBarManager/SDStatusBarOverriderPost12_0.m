@@ -12,8 +12,8 @@
 typedef NS_ENUM(int, StatusBarItem) {
   // 0
   // 1
-  // 2
-  // 3
+  QuietMode = 2,
+  AirplaneMode = 3,
   SignalStrengthBars = 4,
   // 5
   // 6
@@ -125,123 +125,175 @@ typedef struct {
   StatusBarRawData values;
 } StatusBarOverrideData;
 
-@class UIStatusBarServer;
-
-@protocol UIStatusBarServerClient
-
-@required
-
-- (void)statusBarServer:(UIStatusBarServer *)arg1 didReceiveDoubleHeightStatusString:(NSString *)arg2 forStyle:(long long)arg3;
-- (void)statusBarServer:(UIStatusBarServer *)arg1 didReceiveGlowAnimationState:(bool)arg2 forStyle:(long long)arg3;
-- (void)statusBarServer:(UIStatusBarServer *)arg1 didReceiveStatusBarData:(const StatusBarRawData *)arg2 withActions:(int)arg3;
-- (void)statusBarServer:(UIStatusBarServer *)arg1 didReceiveStyleOverrides:(int)arg2;
-
-@end
-
 @interface UIStatusBarServer : NSObject
 
-@property (nonatomic, strong) id<UIStatusBarServerClient> statusBar;
-
++ (StatusBarRawData const *)getStatusBarData;
++ (StatusBarOverrideData *)getStatusBarOverrideData;
++ (void)postStatusBarData:(StatusBarRawData const *)arg1 withActions:(int)arg2;
 + (void)postStatusBarOverrideData:(StatusBarOverrideData *)arg1;
 + (void)permanentizeStatusBarOverrideData;
-+ (StatusBarOverrideData *)getStatusBarOverrideData;
 
 @end
 
-@implementation SDStatusBarOverriderPost12_0
+@implementation SDStatusBarOverriderPost12_0 {
+  @private
+  StatusBarOverrideData _overrideData;
+}
 
-@synthesize timeString;
-@synthesize carrierName;
+- (instancetype)init {
+  if ((self = [super init])) {
+    [self refreshOverrideData];
+  }
+  return self;
+}
+
 @synthesize bluetoothConnected;
 @synthesize bluetoothEnabled;
-@synthesize batteryDetailEnabled;
 @synthesize networkType;
 
-- (void)enableOverrides {
-  StatusBarOverrideData *overrides = [UIStatusBarServer getStatusBarOverrideData];
+- (void)clearOverrideData {
+  memset(&_overrideData, 0, sizeof(StatusBarOverrideData));
+}
 
-  // Set 9:41 time in current localization
-  strcpy(overrides->values.timeString, [self.timeString cStringUsingEncoding:NSUTF8StringEncoding]);
-  overrides->overrideTimeString = 1;
+- (void)refreshOverrideData {
+  memcpy(&_overrideData, [UIStatusBarServer getStatusBarOverrideData], sizeof(StatusBarOverrideData));
+}
+
+- (void)addDefaultOverrides {
+//  StatusBarOverrideData _overrideData;
 
   // Enable 5 bars of mobile (iPhone only)
   if ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPhone) {
-    overrides->overrideItemIsEnabled[SignalStrengthBars] = 1;
-    overrides->values.itemIsEnabled[SignalStrengthBars] = 1;
-    overrides->overrideGsmSignalStrengthBars = 1;
-    overrides->values.gsmSignalStrengthBars = 5;
+    _overrideData.overrideItemIsEnabled[SignalStrengthBars] = 1;
+    _overrideData.values.itemIsEnabled[SignalStrengthBars] = 1;
+    _overrideData.overrideGsmSignalStrengthBars = 1;
+    _overrideData.values.gsmSignalStrengthBars = 5;
   }
 
-  overrides->overrideDataNetworkType = self.networkType != SDStatusBarManagerNetworkTypeWiFi;
-  overrides->values.dataNetworkType = self.networkType - 1;
+//  // Remove carrier text for iPhone, set it to "iPad" for the iPad
+//  _overrideData.overrideServiceString = 1;
+//  if ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPad) {
+////    self.carrierName = @"iPad";
+//    strcpy(_overrideData.values.serviceString, "iPad");
+//  } else {
+//    _overrideData.values.serviceString[0] = '\0';
+//  }
+
+  // Battery: 100% and unplugged
+  _overrideData.overrideItemIsEnabled[BatteryDetail] = YES;
+  _overrideData.values.itemIsEnabled[BatteryDetail] = YES;
+  _overrideData.overrideBatteryCapacity = YES;
+  _overrideData.values.batteryCapacity = 100;
+  _overrideData.overrideBatteryState = YES;
+  _overrideData.values.batteryState = BatteryStateUnplugged;
+  _overrideData.overrideBatteryDetailString = YES;
+  _overrideData.values.batteryDetailString[0] = '\0';
+}
+
+- (NSString *)timeString {
+  if (!_overrideData.overrideTimeString) {
+    return nil;
+  }
+  return [[NSString alloc] initWithUTF8String:_overrideData.values.timeString];
+}
+- (void)setTimeString:(NSString *)timeString {
+  size_t const overrideTimeStringMaxLength = sizeof(_overrideData.values.timeString);
+
+  if (!timeString) {
+    _overrideData.overrideTimeString = false;
+    memset(_overrideData.values.timeString, 0, overrideTimeStringMaxLength);
+    return;
+  }
+
+  _overrideData.overrideTimeString = true;
+  [timeString getCString:_overrideData.values.timeString maxLength:overrideTimeStringMaxLength encoding:NSUTF8StringEncoding];
+}
+
+- (NSString *)carrierName {
+  if (!_overrideData.overrideServiceString) {
+    return nil;
+  }
+  return [[NSString alloc] initWithUTF8String:_overrideData.values.serviceString];
+}
+- (void)setCarrierName:(NSString *)carrierName {
+  size_t const overrideServiceStringMaxLength = sizeof(_overrideData.values.serviceString);
+
+  if (!carrierName) {
+    _overrideData.overrideServiceString = false;
+    memset(_overrideData.values.timeString, 0, overrideServiceStringMaxLength);
+    return;
+  }
+
+  _overrideData.overrideServiceString = true;
+  [carrierName getCString:_overrideData.values.serviceString maxLength:overrideServiceStringMaxLength encoding:NSUTF8StringEncoding];
+}
+
+@synthesize batteryDetailEnabled = _batteryDetailEnabled;
+- (void)setBatteryDetailEnabled:(BOOL)batteryDetailEnabled {
+  _batteryDetailEnabled = batteryDetailEnabled;
+}
+
+- (void)enableOverrides {
+  StatusBarOverrideData overrides = _overrideData;
+
+  overrides.overrideItemIsEnabled[28] = 1;
+  overrides.values.itemIsEnabled[28] = 1;
+  overrides.values.thermalSunlightMode = 1;
+
+  overrides.overrideDataNetworkType = self.networkType != SDStatusBarManagerNetworkTypeWiFi;
+  overrides.values.dataNetworkType = self.networkType - 1;
 
   // Remove carrier text for iPhone, set it to "iPad" for the iPad
-  overrides->overrideServiceString = 1;
+  overrides.overrideServiceString = 1;
   NSString *carrierText = self.carrierName;
   if ([carrierText length] <= 0) {
     carrierText = ([UIDevice currentDevice].userInterfaceIdiom == UIUserInterfaceIdiomPhone) ? @"" : @"iPad";
   }
-  strcpy(overrides->values.serviceString, [carrierText cStringUsingEncoding:NSUTF8StringEncoding]);
+  strcpy(overrides.values.serviceString, [carrierText cStringUsingEncoding:NSUTF8StringEncoding]);
 
-  // Battery: 100% and unplugged
-  overrides->overrideItemIsEnabled[BatteryDetail] = YES;
-  overrides->values.itemIsEnabled[BatteryDetail] = YES;
-  overrides->overrideBatteryCapacity = YES;
-  overrides->values.batteryCapacity = 100;
-  overrides->overrideBatteryState = YES;
-  overrides->values.batteryState = BatteryStateUnplugged;
-  overrides->overrideBatteryDetailString = YES;
-  NSString *batteryDetailString = self.batteryDetailEnabled ? [NSString stringWithFormat:@"%@%%", @(overrides->values.batteryCapacity)] : @" ";
-  // Setting this to an empty string will not work, it needs to be a @" "
-  strcpy(overrides->values.batteryDetailString, [batteryDetailString cStringUsingEncoding:NSUTF8StringEncoding]);
+//  // Battery: 100% and unplugged
+//  overrides.overrideItemIsEnabled[BatteryDetail] = YES;
+//  overrides.values.itemIsEnabled[BatteryDetail] = YES;
+//  overrides.overrideBatteryCapacity = YES;
+//  overrides.values.batteryCapacity = 100;
+//  overrides.overrideBatteryState = YES;
+//  overrides.values.batteryState = BatteryStateUnplugged;
+//  overrides.overrideBatteryDetailString = YES;
+//  NSString *batteryDetailString = @"";
+//  if (self.batteryDetailEnabled) {
+//    batteryDetailString = [NSString stringWithFormat:@"%@%%", @(overrides.values.batteryCapacity)];
+//  }
+//  strcpy(overrides.values.batteryDetailString, [batteryDetailString cStringUsingEncoding:NSUTF8StringEncoding]);
 
   // Bluetooth
-  overrides->overrideItemIsEnabled[Bluetooth] = !!self.bluetoothEnabled;
-  overrides->values.itemIsEnabled[Bluetooth] = !!self.bluetoothEnabled;
+  overrides.overrideItemIsEnabled[Bluetooth] = !!self.bluetoothEnabled;
+  overrides.values.itemIsEnabled[Bluetooth] = !!self.bluetoothEnabled;
   if (self.bluetoothEnabled) {
-    overrides->overrideBluetoothConnected = self.bluetoothConnected;
-    overrides->values.bluetoothConnected = self.bluetoothConnected;
+    overrides.overrideBluetoothConnected = self.bluetoothConnected;
+    overrides.values.bluetoothConnected = self.bluetoothConnected;
   }
 
   // Actually update the status bar
-  [UIStatusBarServer postStatusBarOverrideData:overrides];
-
-  // Remove the @" " used to trick the battery percentage into not showing, if used
-  if (!self.batteryDetailEnabled) {
-    batteryDetailString = @"";
-    strcpy(overrides->values.batteryDetailString, [batteryDetailString cStringUsingEncoding:NSUTF8StringEncoding]);
-    [UIStatusBarServer postStatusBarOverrideData:overrides];
-  }
+  [UIStatusBarServer postStatusBarOverrideData:&overrides];
 
   // Lock in the changes, reset simulator will remove this
-  [UIStatusBarServer permanentizeStatusBarOverrideData];
+//  [UIStatusBarServer permanentizeStatusBarOverrideData];
 }
 
 - (void)disableOverrides {
-  StatusBarOverrideData *overrides = [UIStatusBarServer getStatusBarOverrideData];
+  [self clearOverrideData];
 
-  // Remove all overrides that use the array of bools
-  bzero(overrides->overrideItemIsEnabled, sizeof(overrides->overrideItemIsEnabled));
-  bzero(overrides->values.itemIsEnabled, sizeof(overrides->values.itemIsEnabled));
-
-  // Remove specific overrides (separate flags)
-  overrides->overrideTimeString = 0;
-  overrides->overrideGsmSignalStrengthBars = 0;
-  overrides->overrideDataNetworkType = 0;
-  overrides->overrideBatteryCapacity = 0;
-  overrides->overrideBatteryState = 0;
-  overrides->overrideBatteryDetailString = 0;
-  overrides->overrideBluetoothConnected = 0;
-
-  // Carrier text (it's an override to set it back to the default)
-  overrides->overrideServiceString = 1;
-  strcpy(overrides->values.serviceString, [NSLocalizedString(@"Carrier", @"Carrier") cStringUsingEncoding:NSUTF8StringEncoding]);
-
-  // Actually update the status bar
-  [UIStatusBarServer postStatusBarOverrideData:overrides];
-
-  // Have to call this to remove all the overrides
-  [UIStatusBarServer permanentizeStatusBarOverrideData];
+  [UIStatusBarServer postStatusBarOverrideData:&_overrideData];
 }
+
+//- (void)publishOverride {
+//  StatusBarOverrideData overrides = { 0 };
+//
+//  // Actually update the status bar
+//  [UIStatusBarServer postStatusBarOverrideData:&overrides];
+//
+//  // Have to call this to remove all the overrides
+////  [UIStatusBarServer permanentizeStatusBarOverrideData];
+//}
 
 @end
